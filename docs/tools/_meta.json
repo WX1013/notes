@@ -1,4 +1,17 @@
 [
-  "index",
-  "git"
+  {
+    "type": "file",
+    "name": "index",
+    "label": "Overview"
+  },
+  {
+    "type": "dir",
+    "name": "git",
+    "label": "Git"
+  },
+  {
+    "type": "dir",
+    "name": "trace",
+    "label": "Trace"
+  }
 ]

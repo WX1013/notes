@@ -1,3 +1,17 @@
 [
-  "index"
+  {
+    "type": "file",
+    "name": "index",
+    "label": "Overview"
+  },
+  {
+    "type": "dir",
+    "name": "redis",
+    "label": "Redis"
+  },
+  {
+    "type": "dir",
+    "name": "web",
+    "label": "Web"
+  }
 ]

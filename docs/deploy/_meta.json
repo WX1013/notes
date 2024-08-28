@@ -1,3 +1,22 @@
 [
-  "index"
+  {
+    "type": "file",
+    "name": "index",
+    "label": "Overview"
+  },
+  {
+    "type": "dir",
+    "name": "docker",
+    "label": "Docker"
+  },
+  {
+    "type": "dir",
+    "name": "k8s",
+    "label": "Kubernetes"
+  },
+  {
+    "type": "dir",
+    "name": "jenkins",
+    "label": "Jenkins"
+  }
 ]
