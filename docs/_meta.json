@@ -1,0 +1,32 @@
+[
+  {
+    "text": "开发",
+    "link": "/dev/",
+    "activeMatch": "/dev/"
+  },
+  {
+    "text": "框架",
+    "link": "/structure/",
+    "activeMatch": "/structure/"
+  },
+  {
+    "text": "数据库",
+    "link": "/db/",
+    "activeMatch": "/db/"
+  },
+  {
+    "text": "工具",
+    "link": "/tools/",
+    "activeMatch": "/tools/"
+  },
+  {
+    "text": "部署",
+    "link": "/deploy/",
+    "activeMatch": "/deploy/"
+  },
+  {
+    "text": "其他",
+    "link": "/others/",
+    "activeMatch": "/others/"
+  }
+]
