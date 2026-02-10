@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>商品价格合计校验工具</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  </head>
+  <body class="bg-gray-50">
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+
+<template>
+    <div class="min-h-screen flex items-center justify-center bg-gray-50">
+      <div class="max-w-3xl w-full bg-white shadow rounded-lg p-6 space-y-4">
+        <h2 class="text-xl font-semibold text-gray-800">
+          商品价格合计校验工具
+        </h2>
+  
+        <!-- 上传区域 -->
+        <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+          <input
+            type="file"
+            accept=".xlsx,.xlsm"
+            @change="onFileChange"
+            class="block w-full text-sm text-gray-900
+                   file:mr-4 file:py-2 file:px-4
+                   file:rounded-md file:border-0
+                   file:text-sm file:font-semibold
+                   file:bg-blue-50 file:text-blue-700
+                   hover:file:bg-blue-100"
+          />
+  
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md px-4 py-2
+                   text-sm font-medium text-white
+                   bg-blue-600 hover:bg-blue-700
+                   disabled:bg-gray-300 disabled:cursor-not-allowed
+                   whitespace-nowrap"
+            :disabled="!selectedFile || processing"
+            @click="onStartValidate"
+          >
+            {{ processing ? '解析与校验中...' : '开始校验并下载' }}
+          </button>
+        </div>
+  
+        <!-- 状态提示 -->
+        <p v-if="statusMessage" class="text-sm text-gray-600">
+          {{ statusMessage }}
+        </p>
+  
+        <!-- 错误列表 -->
+        <div v-if="errors.length" class="mt-4 border-t pt-4">
+          <h3 class="font-medium text-red-600 mb-2">
+            发现以下序号的分组「价格之和」与「合计价格」不一致：
+          </h3>
+          <ul class="list-disc pl-5 space-y-1 text-sm text-gray-800">
+            <li v-for="item in errors" :key="item.groupKey">
+              序号 {{ item.groupKey }}
+              （行号: {{ item.rows.join(', ') }}） -
+              小计: {{ item.sum }}，合计: {{ item.total }}，
+              差值: {{ (item.sum - item.total).toFixed(2) }}
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </template>
+  
+  <script setup lang="ts">
+  import { ref } from 'vue';
+  import ExcelJS from 'exceljs';
+  import { saveAs } from 'file-saver';
+  
+  interface ErrorGroup {
+    groupKey: string;
+    rows: number[];   // 该组涉及到的所有 Excel 行号
+    sum: number;      // 价格之和
+    total: number;    // 合计价格
+  }
+  
+  const selectedFile = ref<File | null>(null);
+  const processing = ref(false);
+  const statusMessage = ref('');
+  const errors = ref<ErrorGroup[]>([]);
+  
+  // 读取文件选择
+  function onFileChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    selectedFile.value = file;
+    statusMessage.value = file ? `已选择文件：${file.name}` : '';
+    errors.value = [];
+  }
+  
+  // 点击“开始校验并下载”
+  async function onStartValidate() {
+    if (!selectedFile.value) return;
+  
+    processing.value = true;
+    statusMessage.value = '正在解析与校验，请稍候...';
+    errors.value = [];
+  
+    try {
+      await validateAndDownload(selectedFile.value);
+    } catch (err: any) {
+      console.error(err);
+      statusMessage.value = `处理失败：${err?.message || '未知错误'}`;
+    } finally {
+      processing.value = false;
+    }
+  }
+  
+  // 将 ExcelJS 的单元格值安全转为数字
+  function toNumber(value: any): number | null {
+    if (value == null) return null;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      const v = value.trim();
+      if (!v) return null;
+      const n = Number(v);
+      return Number.isNaN(n) ? null : n;
+    }
+    // 其他类型（公式、日期等）视为非数字，这里可以根据业务扩展
+    return null;
+  }
+  
+  // 主逻辑：解析、校验、标黄并下载
+  async function validateAndDownload(file: File) {
+    const arrayBuffer = await file.arrayBuffer();
+  
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(arrayBuffer);
+  
+    // 默认取第一个工作表，如需按名称可用 workbook.getWorksheet('Sheet1')
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      throw new Error('Excel 中未找到任何工作表');
+    }
+  
+    // 假设第一行是表头，从第二行开始为数据
+    const DATA_START_ROW = 2;
+  
+    /**
+     * 分组思路：
+     * - 分组依据：列 A 的“序号”（合并单元格时，下方行通常为空，这里会沿用最近一次非空序号）
+     * - 合计价格：列 D 的“合计价格”（当单元格为空时，沿用上方最近一个有效合计价格）
+     * - 每一行的 C 列“价格”累加到当前组
+     *
+     * 注意：
+     * - Excel 合并单元格下方的单元格读取时，通常 value 为空，所以“沿用上方最近的有效值”可以正确处理合并。
+     */
+  
+    interface GroupInfo {
+      key: string;        // 序号（字符串化）
+      rows: number[];     // 该组涉及的所有行号
+      sum: number;        // C 列价格之和
+      total: number | null; // D 列合计价格
+    }
+  
+    const groupMap = new Map<string, GroupInfo>();
+  
+    let currentGroupKey: string | null = null; // 当前组（序号）
+    let currentTotal: number | null = null;    // 当前组“有效合计价”
+  
+    worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+      if (rowNumber < DATA_START_ROW) return;
+  
+      const seqCell = row.getCell(1);  // A: 序号
+      const priceCell = row.getCell(3); // C: 价格
+      const totalCell = row.getCell(4); // D: 合计价格
+  
+      const seqRaw = seqCell.value;
+      const totalRaw = totalCell.value;
+  
+      // 1. 计算“有效序号”（遇到非空就更新，空则沿用上一行）
+      if (seqRaw != null && String(seqRaw).trim() !== '') {
+        currentGroupKey = String(seqRaw).trim();
+        // 新组开始时可以把 currentTotal 清空，让后续 D 列来重新赋值
+        currentTotal = null;
+      }
+  
+      // 如果序号还没出现过（例如一大段空行），则跳过
+      if (!currentGroupKey) {
+        return;
+      }
+  
+      // 2. 计算“有效合计价格”（遇到非空就更新，空则沿用上一行）
+      const thisRowTotal = toNumber(totalRaw);
+      if (thisRowTotal != null) {
+        currentTotal = thisRowTotal;
+      }
+  
+      // 3. 获取或创建 group
+      let group = groupMap.get(currentGroupKey);
+      if (!group) {
+        group = {
+          key: currentGroupKey,
+          rows: [],
+          sum: 0,
+          total: currentTotal, // 可能暂时为 null
+        };
+        groupMap.set(currentGroupKey, group);
+      }
+  
+      group.rows.push(rowNumber);
+  
+      // 4. 累加 C 列价格
+      const price = toNumber(priceCell.value);
+      if (price != null) {
+        group.sum += price;
+      }
+  
+      // 每行如果有有效合计价，则更新组的 total
+      if (currentTotal != null) {
+        group.total = currentTotal;
+      }
+    });
+  
+    // 校验并标记异常组
+    const errorGroups: ErrorGroup[] = [];
+  
+    groupMap.forEach((g) => {
+      if (g.total == null) {
+        // 没有合计价格就不参与判断（也可根据需要视为错误）
+        return;
+      }
+      const diff = Math.abs(g.sum - g.total);
+      if (diff >= 0.01) {
+        // 判定为异常组
+        errorGroups.push({
+          groupKey: g.key,
+          rows: g.rows,
+          sum: Number(g.sum.toFixed(2)),
+          total: Number(g.total.toFixed(2)),
+        });
+  
+        // 将该组所有行的单元格背景色设置为黄色
+        g.rows.forEach((rowNumber) => {
+          const row = worksheet.getRow(rowNumber);
+          // 根据你实际列数调整，这里假设至少 A:D
+          for (let col = 1; col <= 4; col++) {
+            const cell = row.getCell(col);
+            // 设置填充色，边框及合并信息保持不动
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFFF00' }, // #FFFF00
+            };
+          }
+        });
+      }
+    });
+  
+    errors.value = errorGroups;
+  
+    if (errorGroups.length === 0) {
+      statusMessage.value = '校验完成：所有分组的「价格之和」与「合计价格」一致。';
+    } else {
+      statusMessage.value = `校验完成：共发现 ${errorGroups.length} 个分组存在不一致，已在导出的文件中用黄色高亮标记。`;
+    }
+  
+    // 导出新的 Excel 文件
+    const outBuffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([outBuffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+  
+    const originalName = file.name.replace(/\.xlsx?$/i, '');
+    const outName = `${originalName}_校验后.xlsx`;
+  
+    saveAs(blob, outName);
+  }
+  </script>
+  
+  <style scoped>
+  /* 可按需自定义补充样式，这里主要依赖 Tailwind */
+  </style>
